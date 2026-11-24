@@ -326,7 +326,7 @@
     </div>
   </section>
 
-  <!-- 2. NGHỆ THUẬT & QUY TRÌNH LÊN MEN CHUNG (TỰ DO THÊM/XÓA BƯỚC + ẢNH/VIDEO TỪNG BƯỚC + TƯ LIỆU XƯỞNG Ủ) -->
+  <!-- 2. NGHỆ THUẬT & QUY TRÌNH LÊN MEN CHUNG -->
   <section id="craft" class="py-16 sm:py-24 bg-pureWhite border-b border-beigeBorder">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       <div class="max-w-3xl mx-auto text-center mb-12">
@@ -964,16 +964,9 @@
       <div class="p-6 space-y-4 text-xs sm:text-sm text-leaf/85 leading-relaxed">
         <div id="cloud-sync-current-badge" class="p-3 rounded-2xl bg-avocadoTint border border-beigeBorder font-medium"></div>
         <p>
-          Để mọi chỉnh sửa trực tiếp trên thiết bị này <strong>hiển thị ngay lập tức khi điện thoại/máy tính khác mở link web</strong>, hãy dán đối tượng JSON cấu hình <strong>Firebase Web App</strong> (có bật Firestore Database) vào ô dưới đây:
+          Đường dẫn Realtime Database của bạn đã được kết nối tự động:
+          <strong class="block text-avocado font-mono mt-1 select-all">https://giamlenmenmochuong-default-rtdb.asia-southeast1.firebasedatabase.app/</strong>
         </p>
-        <div>
-          <label class="block text-xs font-bold uppercase text-leaf/75 mb-1">Cấu Hình Đám Mây (JSON)</label>
-          <textarea id="firebase-config-input" rows="5" placeholder='{"apiKey":"...","authDomain":"...","projectId":"...","storageBucket":"...","messagingSenderId":"...","appId":"..."}' class="w-full px-3.5 py-2.5 rounded-xl border border-beigeBorder bg-creamWhite font-mono text-xs"></textarea>
-        </div>
-        <div class="flex flex-wrap items-center justify-end gap-2 pt-2">
-          <button type="button" onclick="clearCustomFirebaseConfig()" class="px-4 py-2 rounded-full border border-beigeBorder text-xs font-medium hover:bg-beige">Xóa Cấu Hình Riêng</button>
-          <button type="button" onclick="saveCustomFirebaseConfig()" class="px-5 py-2.5 rounded-full bg-avocado hover:bg-avocadoHover text-white text-xs font-bold shadow-xs">Lưu & Kết Nối Đồng Bộ</button>
-        </div>
       </div>
     </div>
   </div>
@@ -1017,14 +1010,21 @@
     </div>
   </div>
 
+  <!-- FIREBASE REALTIME DATABASE SCRIPT -->
   <script type="module">
-    import { initializeApp, deleteApp, getApps } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-    import { getFirestore, doc, setDoc, onSnapshot, collection, addDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getDatabase, ref, set, onValue, push } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-database.js";
 
     const LOCAL_CACHE_KEY = "moc_huong_site_cache_v3";
     const LOCAL_ORDERS_KEY = "moc_huong_orders_cache_v3";
-    const CUSTOM_FB_CONFIG_KEY = "moc_huong_custom_firebase_cfg_v1";
+
+    // Cấu hình kết nối Realtime Database
+    const firebaseConfig = {
+      databaseURL: "https://giamlenmenmochuong-default-rtdb.asia-southeast1.firebasedatabase.app/"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const rtdb = getDatabase(app);
 
     const DEFAULT_SITE_DATA = {
       header: {
@@ -1346,28 +1346,8 @@
         ...((parsed && parsed.craft) || {})
       };
       if (!Array.isArray(mergedCraft.steps) || mergedCraft.steps.length === 0) {
-        mergedCraft.steps = [
-          {
-            title: mergedCraft.step1Title || DEFAULT_SITE_DATA.craft.steps[0].title,
-            desc: mergedCraft.step1Desc || DEFAULT_SITE_DATA.craft.steps[0].desc,
-            mediaType: "",
-            mediaUrl: ""
-          },
-          {
-            title: mergedCraft.step2Title || DEFAULT_SITE_DATA.craft.steps[1].title,
-            desc: mergedCraft.step2Desc || DEFAULT_SITE_DATA.craft.steps[1].desc,
-            mediaType: "",
-            mediaUrl: ""
-          },
-          {
-            title: mergedCraft.step3Title || DEFAULT_SITE_DATA.craft.steps[2].title,
-            desc: mergedCraft.step3Desc || DEFAULT_SITE_DATA.craft.steps[2].desc,
-            mediaType: "",
-            mediaUrl: ""
-          }
-        ];
+        mergedCraft.steps = DEFAULT_SITE_DATA.craft.steps;
       }
-
       return {
         ...DEFAULT_SITE_DATA,
         ...(parsed || {}),
@@ -1395,9 +1375,7 @@
       try {
         localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(siteData));
         localStorage.setItem(LOCAL_ORDERS_KEY, JSON.stringify(ordersList));
-      } catch (e) {
-        showToast("Tệp dung lượng lớn, nên dùng thêm Đồng Bộ Đám Mây hoặc video ngắn gọn");
-      }
+      } catch (e) {}
     }
 
     let siteData = loadLocalCache();
@@ -1416,103 +1394,57 @@
     let currentDetailMediaIdx = 0;
     let quickBuyQty = 1;
 
-    let db = null;
-    let auth = null;
-    let currentUser = null;
-    let appId = typeof __app_id !== 'undefined' ? __app_id : 'moc-huong-vinegar-app';
-    let isFirebaseReady = false;
-
-    function getActiveFirebaseConfig() {
-      try {
-        const customRaw = localStorage.getItem(CUSTOM_FB_CONFIG_KEY);
-        if (customRaw) return JSON.parse(customRaw);
-      } catch (e) {}
-      if (typeof __firebase_config !== 'undefined' && __firebase_config) {
-        try { return JSON.parse(__firebase_config); } catch (e) {}
-      }
-      return null;
-    }
-
-    async function initFirebaseSync() {
+    // KẾT NỐI REALTIME DATABASE VÀ ĐỒNG BỘ NỘI DUNG TỰ ĐỘNG
+    function initRealtimeSync() {
       renderAll();
-      const firebaseConfig = getActiveFirebaseConfig();
-      if (!firebaseConfig) {
-        updateSyncStatus("local");
-        return;
-      }
+      updateSyncStatus("syncing");
 
-      try {
-        for (const existingApp of getApps()) {
-          await deleteApp(existingApp);
-        }
-        const app = initializeApp(firebaseConfig);
-        auth = getAuth(app);
-        db = getFirestore(app);
-
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token && !localStorage.getItem(CUSTOM_FB_CONFIG_KEY)) {
-          await signInWithCustomToken(auth, __initial_auth_token);
+      // Đồng bộ Nội dung Website
+      const siteRef = ref(rtdb, 'site_content');
+      onValue(siteRef, (snapshot) => {
+        const val = snapshot.val();
+        if (val) {
+          siteData = mergeSiteData(val);
+          saveLocalCache();
         } else {
-          await signInAnonymously(auth);
-        }
-
-        onAuthStateChanged(auth, (user) => {
-          if (user) {
-            currentUser = user;
-            isFirebaseReady = true;
-            updateSyncStatus("synced");
-            subscribeToRealtimeData();
-          }
-        });
-      } catch (err) {
-        console.error("Lỗi khởi tạo đồng bộ đám mây:", err);
-        isFirebaseReady = false;
-        updateSyncStatus("local");
-      }
-    }
-
-    function subscribeToRealtimeData() {
-      if (!currentUser || !db) return;
-
-      const siteDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'site_config', 'main_content');
-      onSnapshot(siteDocRef, (snapshot) => {
-        if (snapshot.exists()) {
-          const remoteData = snapshot.data();
-          if (remoteData && remoteData.payload) {
-            try {
-              const parsed = JSON.parse(remoteData.payload);
-              siteData = mergeSiteData(parsed);
-              saveLocalCache();
-            } catch (e) {}
-          }
-        } else {
-          saveSiteDataToCloud();
+          set(siteRef, siteData);
         }
         renderAll();
-      }, (err) => console.error("Lỗi đồng bộ site_config:", err));
+        updateSyncStatus("synced");
+      }, (error) => {
+        console.error("Lỗi đồng bộ Realtime Database:", error);
+        updateSyncStatus("local");
+      });
 
-      const reviewsColRef = collection(db, 'artifacts', appId, 'public', 'data', 'customer_reviews');
-      onSnapshot(reviewsColRef, (snapshot) => {
-        const fetched = [];
-        snapshot.forEach((docSnap) => fetched.push({ id: docSnap.id, ...docSnap.data() }));
-        if (fetched.length > 0) {
-          fetched.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-          reviewsList = fetched;
+      // Đồng bộ Đánh Giá Khách Hàng
+      const reviewsRef = ref(rtdb, 'reviews');
+      onValue(reviewsRef, (snapshot) => {
+        const val = snapshot.val();
+        if (val) {
+          const list = Object.keys(val).map(key => ({ id: key, ...val[key] }));
+          list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+          reviewsList = list;
         } else {
           reviewsList = [...DEFAULT_REVIEWS];
         }
         renderReviews();
-      }, (err) => console.error("Lỗi đồng bộ reviews:", err));
+      });
 
-      const ordersColRef = collection(db, 'artifacts', appId, 'public', 'data', 'orders');
-      onSnapshot(ordersColRef, (snapshot) => {
-        const fetchedOrders = [];
-        snapshot.forEach((docSnap) => fetchedOrders.push({ id: docSnap.id, ...docSnap.data() }));
-        fetchedOrders.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-        ordersList = fetchedOrders;
+      // Đồng bộ Đơn Hàng
+      const ordersRef = ref(rtdb, 'orders');
+      onValue(ordersRef, (snapshot) => {
+        const val = snapshot.val();
+        if (val) {
+          const list = Object.keys(val).map(key => ({ id: key, ...val[key] }));
+          list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+          ordersList = list;
+        } else {
+          ordersList = [];
+        }
         saveLocalCache();
         const countEl = document.getElementById('admin-orders-count');
         if (countEl) countEl.innerText = ordersList.length;
-      }, (err) => console.error("Lỗi đồng bộ orders:", err));
+      });
     }
 
     async function saveSiteDataToCloud() {
@@ -1520,21 +1452,12 @@
       saveLocalCache();
       renderAll();
 
-      if (!isFirebaseReady || !currentUser || !db) {
-        updateSyncStatus("local");
-        return;
-      }
-
       try {
-        const siteDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'site_config', 'main_content');
-        await setDoc(siteDocRef, {
-          payload: JSON.stringify(siteData),
-          updatedAt: Date.now(),
-          updatedBy: currentUser.uid
-        });
+        const siteRef = ref(rtdb, 'site_content');
+        await set(siteRef, siteData);
         updateSyncStatus("synced");
       } catch (err) {
-        console.error("Lỗi lưu dữ liệu đám mây:", err);
+        console.error("Lỗi đẩy dữ liệu lên Firebase:", err);
         updateSyncStatus("local");
       }
     }
@@ -1545,9 +1468,9 @@
       if (state === "syncing") {
         el.innerHTML = `<i data-lucide="refresh-cw" class="w-3.5 h-3.5 animate-spin"></i> Đang đồng bộ...`;
       } else if (state === "synced") {
-        el.innerHTML = `<i data-lucide="cloud-check" class="w-3.5 h-3.5"></i> Đã đồng bộ mọi thiết bị`;
+        el.innerHTML = `<i data-lucide="cloud-check" class="w-3.5 h-3.5"></i> Firebase Realtime Online`;
       } else {
-        el.innerHTML = `<i data-lucide="hard-drive" class="w-3.5 h-3.5"></i> Đã lưu bản xem trước`;
+        el.innerHTML = `<i data-lucide="hard-drive" class="w-3.5 h-3.5"></i> Lưu cục bộ`;
       }
       if (window.lucide) lucide.createIcons();
     }
@@ -1566,13 +1489,7 @@
       const percentOff = hasDiscount && rawOriginal > 0
         ? Math.max(1, Math.round((savedAmount / rawOriginal) * 100))
         : 0;
-      return {
-        hasDiscount,
-        originalPrice: rawOriginal,
-        salePrice,
-        savedAmount,
-        percentOff
-      };
+      return { hasDiscount, originalPrice: rawOriginal, salePrice, savedAmount, percentOff };
     }
 
     function parseVideoEmbedUrl(url) {
@@ -1637,7 +1554,7 @@
     function readVideoFileAsDataUrl(file) {
       return new Promise((resolve, reject) => {
         if (file.size > 12 * 1024 * 1024) {
-          showToast("Video hơi lớn (>12MB), đang nạp trực tiếp...");
+          showToast("Video lớn (>12MB), nên dán link YouTube để tải nhanh hơn.");
         }
         const reader = new FileReader();
         reader.onload = (e) => resolve(e.target.result);
@@ -2781,17 +2698,15 @@
     };
 
     async function recordOrder(orderData) {
-      if (isFirebaseReady && currentUser && db) {
-        try {
-          const ordersColRef = collection(db, 'artifacts', appId, 'public', 'data', 'orders');
-          await addDoc(ordersColRef, orderData);
-          return;
-        } catch (err) {}
+      try {
+        const ordersRef = ref(rtdb, 'orders');
+        await push(ordersRef, orderData);
+      } catch (err) {
+        ordersList.unshift({ id: "ord-" + Date.now(), ...orderData });
+        saveLocalCache();
+        const countEl = document.getElementById('admin-orders-count');
+        if (countEl) countEl.innerText = ordersList.length;
       }
-      ordersList.unshift({ id: "ord-" + Date.now(), ...orderData });
-      saveLocalCache();
-      const countEl = document.getElementById('admin-orders-count');
-      if (countEl) countEl.innerText = ordersList.length;
     }
 
     window.openOrdersManagerModal = () => {
@@ -2866,34 +2781,27 @@
         createdAt: Date.now()
       };
 
-      if (isFirebaseReady && currentUser && db) {
-        try {
-          const reviewsColRef = collection(db, 'artifacts', appId, 'public', 'data', 'customer_reviews');
-          await addDoc(reviewsColRef, reviewObj);
-          closeReviewModal();
-          e.target.reset();
-          showToast("Cảm ơn bạn đã gửi đánh giá!");
-          return;
-        } catch (err) {}
+      try {
+        const reviewsRef = ref(rtdb, 'reviews');
+        await push(reviewsRef, reviewObj);
+      } catch (err) {
+        reviewsList.unshift({ id: "rev-" + Date.now(), ...reviewObj });
+        renderReviews();
       }
 
-      reviewsList.unshift({ id: "rev-" + Date.now(), ...reviewObj });
-      renderReviews();
       closeReviewModal();
       e.target.reset();
       showToast("Cảm ơn bạn đã gửi đánh giá!");
     };
 
     window.deleteReview = async (revId) => {
-      if (isFirebaseReady && currentUser && db && !revId.startsWith("rev-")) {
-        try {
-          await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'customer_reviews', revId));
-          showToast("Đã xóa đánh giá");
-          return;
-        } catch (err) {}
+      try {
+        const singleReviewRef = ref(rtdb, 'reviews/' + revId);
+        await set(singleReviewRef, null);
+      } catch (err) {
+        reviewsList = reviewsList.filter(r => r.id !== revId);
+        renderReviews();
       }
-      reviewsList = reviewsList.filter(r => r.id !== revId);
-      renderReviews();
       showToast("Đã xóa đánh giá");
     };
 
@@ -2975,51 +2883,13 @@
 
     window.openCloudSyncModal = () => {
       const badge = document.getElementById('cloud-sync-current-badge');
-      const input = document.getElementById('firebase-config-input');
-      const saved = localStorage.getItem(CUSTOM_FB_CONFIG_KEY) || "";
-      input.value = saved;
-      if (isFirebaseReady) {
-        badge.innerHTML = `<span class="text-avocadoHover font-bold">● Đang kết nối đồng bộ đám mây thời gian thực.</span> Mọi thiết bị dùng chung cấu hình này sẽ thấy bản mới nhất.`;
-      } else {
-        badge.innerHTML = `<span class="text-amber-700 font-bold">● Đang lưu trên bản xem trước cục bộ.</span> Dán cấu hình đám mây bên dưới để đồng bộ tự động qua thiết bị khác.`;
-      }
+      badge.innerHTML = `<span class="text-avocadoHover font-bold">● Đang kết nối Firebase Realtime Database.</span> Dữ liệu được đồng bộ tự động thời gian thực.`;
       document.getElementById('cloud-sync-modal').classList.remove('hidden');
       if (window.lucide) lucide.createIcons();
     };
 
     window.closeCloudSyncModal = () => {
       document.getElementById('cloud-sync-modal').classList.add('hidden');
-    };
-
-    window.saveCustomFirebaseConfig = async () => {
-      const raw = document.getElementById('firebase-config-input').value.trim();
-      if (!raw) {
-        showToast("Vui lòng dán JSON cấu hình");
-        return;
-      }
-      try {
-        const parsed = JSON.parse(raw);
-        if (!parsed.apiKey || !parsed.projectId) {
-          showToast("Cấu hình thiếu apiKey hoặc projectId");
-          return;
-        }
-        localStorage.setItem(CUSTOM_FB_CONFIG_KEY, JSON.stringify(parsed));
-        closeCloudSyncModal();
-        await initFirebaseSync();
-        await saveSiteDataToCloud();
-        showToast("Đã kết nối & đồng bộ dữ liệu lên đám mây!");
-      } catch (e) {
-        showToast("Định dạng JSON chưa hợp lệ, vui lòng kiểm tra lại");
-      }
-    };
-
-    window.clearCustomFirebaseConfig = async () => {
-      localStorage.removeItem(CUSTOM_FB_CONFIG_KEY);
-      document.getElementById('firebase-config-input').value = "";
-      isFirebaseReady = false;
-      updateSyncStatus("local");
-      closeCloudSyncModal();
-      showToast("Đã xóa cấu hình đám mây riêng");
     };
 
     function showToast(msg) {
@@ -3034,7 +2904,7 @@
       }, 2800);
     }
 
-    initFirebaseSync();
+    initRealtimeSync();
   </script>
 </body>
 </html>
